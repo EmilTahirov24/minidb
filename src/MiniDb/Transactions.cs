@@ -155,6 +155,13 @@ public sealed class ReadTransaction : IDisposable
         pages.VerifyAccounting(tree.Verify());
     }
 
+    internal (uint Pages, uint Free) PageCounts()
+    {
+        Check();
+        var header = new HeaderPage(pages.Read(0));
+        return (header.PageCount, header.FreeCount);
+    }
+
     private void Check()
     {
         ObjectDisposedException.ThrowIf(done, this);

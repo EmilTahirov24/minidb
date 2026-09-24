@@ -263,11 +263,12 @@ comes from a seed, so any failure can be replayed exactly.
   commit was under way, as of that one too. Nothing in between is accepted.
 - **Damage.** Bits flipped in pages of the data file and the log must be detected by their
   checksums, never read back as data.
-- **Benchmarks.** Loading a million keys, in random and in increasing order; random point
+- **Benchmarks.** Loading 100,000 keys, in random and in increasing order; random point
   reads; range scans; the latency of single-key commits, which is the latency of an `fsync`;
-  the bytes written to the log per byte of data; how full pages are after loading and after
-  deleting half the keys. SQLite runs the same workloads as a reference, in WAL mode with full
-  synchronisation, in a table keyed by the same bytes.
+  the bytes a commit writes to the log; how full pages are after loading and after deleting
+  half the keys. SQLite runs the same workloads as a reference, in WAL mode with full
+  synchronisation, in a table keyed by the same bytes. *The first version said a million keys;
+  the benchmark harness repeats every load, and at a million a run took too long to repeat.*
 
 Milestone 1 is done when the model tests and the crash tests pass across a fixed set of seeds
 in CI, with the number of crash points they cover in the README; when the benchmarks are in

@@ -30,7 +30,12 @@ mode, and copied into the data file at checkpoints.
 file: the log always has an intact image to put back, and putting it back twice changes
 nothing, so recovery can itself be interrupted. Logical logging needs the page it replays onto
 to be intact, which is exactly what a torn write takes away. The cost is bytes: a small change
-logs a whole four-kilobyte page. It is measured in milestone 1.
+logs a whole four-kilobyte page.
+
+*Measured:* a commit of one new 16-byte key with a 100-byte value writes 4,775 bytes to the
+log, of which 2.4% is the data - about 1.16 pages, the leaf and now and then the header page.
+SQLite in its WAL mode writes 6,641 bytes for the same commit
+([results](results/storage-measurements.md)).
 
 ## 3. Only empty pages are freed
 
@@ -42,6 +47,14 @@ redistributes them to keep every page at least half full.
 **Why.** Merging and redistribution are where B-tree implementations are most often wrong, and
 the benefit is only space. PostgreSQL's B-tree index makes the same choice. The space lost after
 heavy deletion is measured in milestone 1.
+
+*Measured:* after deleting a random half of 100,000 keys, not one page is empty, so none is
+freed: the data file stays at 17.1 MiB with its pages about a third full. SQLite, which does
+rebalance, has 551 pages free for reuse after the same deletes. Random inserts cost space too,
+for a related reason: a page that overflows splits in two, so MiniDB's pages end 65% full
+after a random load where SQLite's, which spreads the cells over its neighbours, end 82% full
+([results](results/storage-measurements.md)). If space matters more than simplicity later,
+this is the decision to revisit.
 
 ## 4. One transaction at a time in milestone 1
 

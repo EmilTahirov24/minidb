@@ -150,6 +150,13 @@ public sealed class Database : IDisposable
         transaction.Verify();
     }
 
+    /// <summary>Pages in the data file and how many of them are free, as the header counts them.</summary>
+    internal (uint Pages, uint Free) PageCounts()
+    {
+        using var transaction = BeginRead();
+        return transaction.PageCounts();
+    }
+
     /// <summary>
     /// Make one transaction's pages durable and current. Called with the turn held; when it
     /// returns, the transaction is committed.
