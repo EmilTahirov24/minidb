@@ -110,9 +110,18 @@ the new key to the new page. How full pages end up, with and without it, is meas
 
 **Delete** removes the cell and leaves the page as it is, however empty, unless it is now
 completely empty. An empty leaf is unlinked from its neighbours, its entry is removed from its
-parent, and the page goes on the free list. An internal page left with a single child is
-replaced in its parent by that child; when that page is the root, the tree becomes one level
-shorter.
+parent, and the page goes on the free list. An internal page that loses its last child is freed
+the same way, and its parent loses an entry in turn.
+
+An internal page left with a single child stays, routing everything to that child. Replacing
+it with the child would be shorter, but it would make that one branch of the tree a level
+shorter than all the others, and every leaf has to stay at the same depth. The one exception
+is the root: a root with a single child hands the root over to it, which shortens every path
+at once.
+
+*This corrects the first version of this document, which replaced any internal page left with
+a single child by that child. That keeps every page useful but breaks the tree's balance
+anywhere below the root; it was caught while writing the code for it, before any existed.*
 
 Underfull pages are not merged with their neighbours. Merging and redistributing are where a
 B-tree is most often wrong, and PostgreSQL's B-tree index makes the same choice, reclaiming
@@ -125,19 +134,21 @@ Invariants that hold after every transaction, and that a checker in the tests ve
    least the key of the cell before it.
 3. All leaves are at the same depth.
 4. Following `right` from the first leaf visits every leaf in key order, and `left` mirrors it.
-5. Every internal page has at least one cell. Every leaf has at least one, except a root leaf,
-   which is an empty tree.
+5. Every leaf has at least one key, except a root leaf, which is an empty tree. Every internal
+   page has at least one child, and an internal root at least two.
 6. Every page below the page count is exactly one of: the header, reachable from the root, or
    on the free list. No page is lost, none is used twice.
 7. Every page's checksum is correct.
 
 ## The page cache
 
-Pages are read into a cache of fixed size, a few megabytes by default. Pages in use are
-pinned; the rest are evicted with the CLOCK algorithm, which approximates least-recently-used
-without reordering a list on every access. A changed page that is evicted before the next
-checkpoint is written to the data file first. That is safe because its latest image is
-already in the log: if the write is torn by a crash, recovery overwrites it.
+Pages are read into a cache of fixed size, a few megabytes by default, and evicted with the
+CLOCK algorithm, which approximates least-recently-used without reordering a list on every
+access. The cache never reuses one page's memory for another: an evicted page's bytes stay as
+they were for any code still holding them, so nothing has to be pinned, at the cost of some
+work for the garbage collector. A changed page that is evicted before the next checkpoint is
+written to the data file first. That is safe because its latest image is already in the log:
+if the write is torn by a crash, recovery overwrites it.
 
 ## Transactions and the log
 

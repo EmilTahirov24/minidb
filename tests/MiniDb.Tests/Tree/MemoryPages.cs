@@ -3,36 +3,41 @@ using MiniDb.Tree;
 
 namespace MiniDb.Tests.Tree;
 
-/// <summary>Pages in a dictionary, for testing the tree on its own: no cache, no log, no disk.</summary>
-internal sealed class MemoryPages : IPages
+/// <summary>
+/// Pages in a dictionary, for testing the tree on its own: no cache, no log, no disk. The free
+/// list and the header are the real ones.
+/// </summary>
+internal sealed class MemoryPages : PageSpace
 {
     private readonly Dictionary<uint, byte[]> pages = [];
-    private uint next = 2;
 
     public MemoryPages()
     {
+        var header = new byte[Page.Size];
+        HeaderPage.Format(header);
+        pages[0] = header;
         var root = new byte[Page.Size];
         NodePage.Format(root, PageType.Leaf);
         pages[1] = root;
-        Root = 1;
     }
 
-    public uint Root { get; set; }
+    public uint FreeCount => new HeaderPage(Read(0)).FreeCount;
 
-    public IEnumerable<uint> Ids => pages.Keys;
+    public override byte[] Read(uint page) =>
+        pages.TryGetValue(page, out var bytes) ? bytes : throw new InvalidOperationException($"page {page} was never written");
 
-    public byte[] Read(uint page) => pages[page];
-
-    public byte[] Modify(uint page) => pages[page];
-
-    public uint Allocate()
+    public override byte[] Modify(uint page)
     {
-        uint id = next++;
-        pages[id] = new byte[Page.Size];
-        return id;
+        if (!pages.TryGetValue(page, out var bytes))
+        {
+            bytes = new byte[Page.Size];
+            pages[page] = bytes;
+        }
+        return bytes;
     }
 
-    public void Free(uint page) => pages.Remove(page);
+    /// <summary>The tree's shape, and that every page is accounted for.</summary>
+    public void Verify(BTree tree) => VerifyAccounting(tree.Verify());
 }
 
 internal sealed class ByteComparer : IComparer<byte[]>
