@@ -81,3 +81,43 @@ and recovery has run.
 **Why.** After a failed flush the operating system may already have dropped the data, and a
 second flush can report success anyway. PostgreSQL learned this in 2018 and changed to stopping
 too. Recovery from the log is the only state that is known to be right.
+
+## 6. Snapshots come from versions of pages, not of keys
+
+**Context.** Multi-version concurrency control keeps old versions so that a transaction can read
+a consistent snapshot while others change the data. The versions can be kept per key, as
+PostgreSQL, RocksDB and CockroachDB do, or per page, as LMDB and SQLite's WAL mode do.
+
+**Decision.** Per page, in memory only, for as long as an open transaction may read them.
+
+**Why.** Milestone 1's tree, log, checkpoints and recovery - and the 15,420 recoveries that test
+them - stay exactly as they are, and nothing old ever reaches the disk, so nothing has to be
+vacuumed. The cost is memory: a transaction that stays open keeps the page versions it might read
+until it ends. Versions do not survive a restart, and nothing needs them to.
+
+## 7. Write transactions are optimistic: the first committer wins
+
+**Context.** Concurrent writers either lock what they touch as they go, as two-phase locking
+does, or go ahead and are checked when they commit.
+
+**Decision.** A write transaction's changes stay in the transaction until it commits. If another
+transaction wrote any of the same keys and committed after this one began, the commit throws
+`WriteConflictException` and the caller retries.
+
+**Why.** Nothing ever waits for another transaction, so there is no deadlock to detect; a
+transaction that only reads can never fail; and checking the keys written is exactly what
+snapshot isolation asks for. The cost is work thrown away when conflicts are frequent, which the
+bank-transfer test counts in retries.
+
+## 8. Snapshot isolation, not serializable
+
+**Context.** Snapshot isolation allows two anomalies, write skew and the read-only anomaly, that
+serializable isolation forbids.
+
+**Decision.** Snapshot isolation. The two anomalies it allows are documented, and tested as
+allowed.
+
+**Why.** It is what PostgreSQL's `REPEATABLE READ` and Oracle's `SERIALIZABLE` give, widely used
+and simple to implement correctly. Serializable snapshot isolation, which PostgreSQL has used for
+`SERIALIZABLE` since 9.1, adds tracking of what each transaction reads; it is a possible later
+step, not part of this milestone.
