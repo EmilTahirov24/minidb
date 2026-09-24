@@ -90,10 +90,11 @@ internal sealed class SimulatedDisk : IStorage
     /// The disk a machine restarted now would find: what was flushed, plus whatever unflushed
     /// writes <paramref name="survival"/> lets through, chosen by <paramref name="seed"/>.
     /// </summary>
-    public SimulatedDisk Reboot(Survival survival, int seed = 0)
+    /// <param name="crashAt">An operation at which the rebooted disk crashes in turn; -1 for never.</param>
+    public SimulatedDisk Reboot(Survival survival, int seed = 0, long crashAt = -1)
     {
         var random = new Random(seed);
-        var rebooted = new SimulatedDisk();
+        var rebooted = new SimulatedDisk(crashAt);
         foreach (var (name, state) in files)
         {
             var surviving = state.Durable.Clone();

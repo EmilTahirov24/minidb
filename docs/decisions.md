@@ -43,16 +43,20 @@ redistributes them to keep every page at least half full.
 the benefit is only space. PostgreSQL's B-tree index makes the same choice. The space lost after
 heavy deletion is measured in milestone 1.
 
-## 4. One writer at a time in milestone 1
+## 4. One transaction at a time in milestone 1
 
 **Context.** Concurrent transactions need either locks on individual keys and pages or several
 versions of the data.
 
-**Decision.** In milestone 1, one write transaction runs at a time, and readers wait for it.
+**Decision.** In milestone 1, one transaction runs at a time, reading or writing, and the others
+wait. A thread that already holds one and asks for another gets an exception.
 
 **Why.** It is correct by construction, and it gives milestone 2 something to measure against:
 multi-version concurrency control replaces it there, and the difference in throughput shows
-what it bought.
+what it bought. Readers wait too, not only for the writer, because the page cache is not yet
+safe to share between threads. The exception is there because the alternative is worse: a
+thread waiting for a turn it holds itself waits for ever, and a test of this project's own did
+exactly that before the check existed.
 
 ## 5. A failed `fsync` stops the database
 

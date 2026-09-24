@@ -480,3 +480,7 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# The list above ignores every folder named Log. This project's write-ahead log is code.
+!src/MiniDb/Log/
+!tests/MiniDb.Tests/Log/

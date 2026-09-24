@@ -33,9 +33,11 @@ using (var tx = db.BeginRead())
 }
 ```
 
-One write transaction runs at a time, and read transactions wait while it does. That is the
-simplest arrangement that is obviously correct, and milestone 2 replaces it: the difference
-in throughput is one of the things milestone 2 will measure.
+One transaction runs at a time, reading or writing, and the others wait: the page cache is not
+yet safe to share between threads. That is the simplest arrangement that is obviously correct,
+and milestone 2 replaces it; the difference in throughput is one of the things milestone 2 will
+measure. A thread that already holds a transaction and asks for another would wait for itself
+for ever, so it gets an exception instead.
 
 ## Files
 
@@ -189,6 +191,14 @@ only if its commit frame does. The generation is what makes old frames harmless:
 the log writes a new header with the next generation, and every frame of the old one is dead
 from then on, without truncating the file.
 
+That only holds if a generation is never used twice. A crash can tear the header while a reset
+writes it, and then its generation is lost. Starting again from zero would be wrong: new frames
+would overwrite the start of the file, and the intact old frames after them, if they happened
+to carry the generation reached again, would read as their continuation - old page images
+applied over newer ones. So after a damaged header, the next generation is chosen above that
+of every intact frame still in the file. *This case was found while writing the log, not in the
+first version of this document; a test replays it.*
+
 This way of logging - whole pages, like SQLite in its WAL mode - is not the most economical.
 Changing one hundred-byte value writes a four-kilobyte page to the log. It is chosen because
 it is the simplest design that stays correct when a crash tears a page in half: whatever state
@@ -229,7 +239,7 @@ What each kind of crash leaves behind, and why it is repaired:
 | the flush of the log | Any part of the frames, in any order | The same: frames after the first bad one are ignored, even if intact |
 | writing a page back on eviction | A torn page in the data file | Overwritten by its image from the log |
 | a checkpoint | A mix of old and new pages in the data file | Every changed page has an image in the log, which is applied again |
-| a reset of the log | A torn log header | The log is treated as empty; the data file already has all of it |
+| a reset of the log | A torn log header | The log is treated as empty: the data file already has all of it. The next generation is chosen above every intact frame's |
 | recovery itself | Part of the images applied | Applied again |
 
 A new database is written to a temporary file and renamed into place, so a crash while it is
@@ -274,8 +284,8 @@ document that was not obvious is in [decisions.md](../decisions.md).
 
 ## Known limits
 
-- **One writer at a time**, and readers wait for it. Milestone 2 replaces this with
-  multi-version concurrency control.
+- **One transaction at a time**, readers included, and none held across an `await`. Milestone 2
+  replaces this with multi-version concurrency control.
 - **About a kilobyte for key and value together.** Larger values would need overflow pages;
   nothing planned needs them.
 - **No merging of underfull pages**, as described above.
