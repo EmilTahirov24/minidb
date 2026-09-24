@@ -92,6 +92,45 @@ internal readonly ref struct NodePage
     public ReadOnlySpan<byte> KeyAt(int index) =>
         Type == PageType.Leaf ? LeafCell.Key(Cell(index)) : InternalCell.Key(Cell(index));
 
+    /// <summary>The first slot whose key is at least <paramref name="key"/>, and whether it is equal.</summary>
+    public int LowerBound(ReadOnlySpan<byte> key, out bool found)
+    {
+        int low = 0, high = Count;
+        while (low < high)
+        {
+            int middle = (low + high) >>> 1;
+            if (KeyAt(middle).SequenceCompareTo(key) < 0)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        found = low < Count && KeyAt(low).SequenceEqual(key);
+        return low;
+    }
+
+    /// <summary>The first slot whose key is greater than <paramref name="key"/>; <see cref="Count"/> if none is.</summary>
+    public int UpperBound(ReadOnlySpan<byte> key)
+    {
+        int low = 0, high = Count;
+        while (low < high)
+        {
+            int middle = (low + high) >>> 1;
+            if (KeyAt(middle).SequenceCompareTo(key) <= 0)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        return low;
+    }
+
     /// <summary>Point the internal cell at <paramref name="index"/> at another child page.</summary>
     public void SetChild(int index, uint child) =>
         InternalCell.SetChild(bytes[CellOffset(index)..], child);
