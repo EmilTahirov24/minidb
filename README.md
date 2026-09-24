@@ -59,6 +59,11 @@ stale link between leaves - and every one was caught. Two of those runs found ho
 tests instead: the test trees were too shallow to reach one deletion path, and a damaged link
 made a scan loop for ever rather than fail. Both are fixed.
 
+**What that does not cover.** Crashing once per operation, and once more during the recovery,
+does not produce every sequence of crashes. The log-generation problem below needs two crashes
+in a particular order: with its fix removed, every crash test still passes, and only the test
+written for that case fails.
+
 `dotnet test` runs all of it in under a minute.
 
 ## What building it found
