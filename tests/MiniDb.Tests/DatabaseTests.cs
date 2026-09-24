@@ -64,38 +64,46 @@ public sealed class DatabaseTests : IDisposable
     }
 
     [Fact]
-    public void A_thread_holding_a_transaction_that_asks_for_another_gets_an_error_not_a_hang()
+    public void One_thread_can_hold_several_transactions_and_each_keeps_its_own_snapshot()
     {
         using var db = Database.Open(new SimulatedDisk(), "db", Options);
-        using (var read = db.BeginRead())
+        using var before = db.BeginRead();
+        using (var write = db.BeginWrite())
         {
-            var error = Assert.Throws<InvalidOperationException>(() => db.BeginWrite());
-            Assert.Contains("wait for ever", error.Message);
-            Assert.Throws<InvalidOperationException>(() => db.BeginRead());
-            Assert.Throws<InvalidOperationException>(db.Checkpoint);
+            write.Put("a"u8, "1"u8);
+            write.Commit();
         }
-        using var write = db.BeginWrite(); // free again once the first one is done
+        using var after = db.BeginRead();
+
+        Assert.Null(before.Get("a"u8));
+        Assert.Equal("1"u8.ToArray(), after.Get("a"u8));
     }
 
     [Fact]
-    public void Another_thread_waits_its_turn_and_then_gets_it()
+    public void A_commit_does_not_wait_for_an_open_reader()
     {
         using var db = Database.Open(new SimulatedDisk(), "db", Options);
-        var read = db.BeginRead();
-        var other = new Thread(() =>
+        using var read = db.BeginRead();
+        var writer = new Thread(() =>
         {
             using var tx = db.BeginWrite();
             tx.Put("a"u8, "1"u8);
             tx.Commit();
         });
-        other.Start();
+        writer.Start();
 
-        Assert.False(other.Join(200), "the second transaction did not wait for the first");
+        Assert.True(writer.Join(10_000), "the commit waited for the reader");
+        Assert.Null(read.Get("a"u8)); // the reader's snapshot is from before the commit
+    }
+
+    [Fact]
+    public void Closing_the_database_with_a_transaction_still_open_is_refused()
+    {
+        var db = Database.Open(new SimulatedDisk(), "db", Options);
+        var read = db.BeginRead();
+        Assert.Throws<InvalidOperationException>(db.Dispose);
         read.Dispose();
-        Assert.True(other.Join(10_000), "the second transaction never got its turn");
-
-        using var check = db.BeginRead();
-        Assert.Equal("1"u8.ToArray(), check.Get("a"u8));
+        db.Dispose();
     }
 
     [Fact]

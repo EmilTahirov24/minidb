@@ -39,6 +39,9 @@ internal sealed class SimulatedDisk : IStorage
     public const int SectorSize = 512;
 
     private readonly Dictionary<string, FileState> files = [];
+
+    // The database reads and writes from several threads at once; the disk takes one request at a time.
+    private readonly object gate = new();
     private readonly long crashAt;
 
     /// <param name="crashAt">The operation, counted from 0, at which to crash; -1 for never.</param>
@@ -50,6 +53,14 @@ internal sealed class SimulatedDisk : IStorage
     public bool Crashed { get; private set; }
 
     public IStorageFile Open(string name)
+    {
+        lock (gate)
+        {
+            return OpenLocked(name);
+        }
+    }
+
+    private IStorageFile OpenLocked(string name)
     {
         ThrowIfCrashed();
         if (!files.TryGetValue(name, out var state))
@@ -67,8 +78,11 @@ internal sealed class SimulatedDisk : IStorage
 
     public bool Exists(string name)
     {
-        ThrowIfCrashed();
-        return files.ContainsKey(name);
+        lock (gate)
+        {
+            ThrowIfCrashed();
+            return files.ContainsKey(name);
+        }
     }
 
     public void Rename(string from, string to) => Operation(() =>
@@ -84,7 +98,13 @@ internal sealed class SimulatedDisk : IStorage
     public void Delete(string name) => Operation(() => files.Remove(name));
 
     /// <summary>Everything a program would read from the file now, flushed or not.</summary>
-    public byte[] Contents(string name) => files[name].Current.ToArray();
+    public byte[] Contents(string name)
+    {
+        lock (gate)
+        {
+            return files[name].Current.ToArray();
+        }
+    }
 
     /// <summary>
     /// The disk a machine restarted now would find: what was flushed, plus whatever unflushed
@@ -92,6 +112,14 @@ internal sealed class SimulatedDisk : IStorage
     /// </summary>
     /// <param name="crashAt">An operation at which the rebooted disk crashes in turn; -1 for never.</param>
     public SimulatedDisk Reboot(Survival survival, int seed = 0, long crashAt = -1)
+    {
+        lock (gate)
+        {
+            return RebootLocked(survival, seed, crashAt);
+        }
+    }
+
+    private SimulatedDisk RebootLocked(Survival survival, int seed, long crashAt)
     {
         var random = new Random(seed);
         var rebooted = new SimulatedDisk(crashAt);
@@ -138,6 +166,14 @@ internal sealed class SimulatedDisk : IStorage
 
     private void Operation(Action complete, Action? inFlight = null)
     {
+        lock (gate)
+        {
+            OperationLocked(complete, inFlight);
+        }
+    }
+
+    private void OperationLocked(Action complete, Action? inFlight)
+    {
         ThrowIfCrashed();
         if (Operations == crashAt)
         {
@@ -183,15 +219,21 @@ internal sealed class SimulatedDisk : IStorage
         {
             get
             {
-                disk.ThrowIfCrashed();
-                return state.Current.Length;
+                lock (disk.gate)
+                {
+                    disk.ThrowIfCrashed();
+                    return state.Current.Length;
+                }
             }
         }
 
         public int Read(long offset, Span<byte> buffer)
         {
-            disk.ThrowIfCrashed();
-            return state.Current.Read(offset, buffer);
+            lock (disk.gate)
+            {
+                disk.ThrowIfCrashed();
+                return state.Current.Read(offset, buffer);
+            }
         }
 
         public void Write(long offset, ReadOnlySpan<byte> data)
@@ -236,7 +278,13 @@ internal sealed class SimulatedDisk : IStorage
             state.Pending.Clear();
         });
 
-        public void Dispose() => state.IsOpen = false;
+        public void Dispose()
+        {
+            lock (disk.gate)
+            {
+                state.IsOpen = false;
+            }
+        }
     }
 
     /// <summary>A growable run of bytes, the contents of one version of a file.</summary>

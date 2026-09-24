@@ -19,9 +19,10 @@ public sealed class DatabaseOptions
 /// through a write-ahead log, and recovery to the last acknowledged commit after a crash.
 /// </summary>
 /// <remarks>
-/// One transaction runs at a time, reading or writing; the others wait. A thread that already
-/// holds a transaction and asks for a second one gets an exception, rather than waiting for
-/// itself for ever. Holding a transaction across an <c>await</c> is not supported yet.
+/// Any number of transactions run at once, each on a snapshot of the database as of when it
+/// began: snapshot isolation. Reading never waits. Commits go one at a time, and a commit that
+/// wrote a key another transaction wrote and committed first fails with
+/// <see cref="WriteConflictException"/>.
 /// </remarks>
 public sealed class Database : IDisposable
 {
@@ -29,13 +30,20 @@ public sealed class Database : IDisposable
     private readonly IStorageFile logFile;
     private readonly WriteAheadLog log;
     private readonly DatabaseOptions options;
-    private readonly SemaphoreSlim turn = new(1, 1);
 
-    // The thread holding the turn, or 0. A thread that holds it and asks for it again could only
-    // wait for itself; any other thread simply waits its turn.
-    private int holder;
-    private bool failed;
-    private bool disposed;
+    // One commit or checkpoint at a time, held across the flush. The record of written keys
+    // below is only ever touched under it.
+    private readonly object commitLock = new();
+
+    // For each key written by a commit that an open transaction may not have seen, the sequence
+    // number of the last such commit - and the commits in order, to drop entries as the oldest
+    // open snapshot moves past them.
+    private readonly Dictionary<byte[], long> lastWritten = new(ByteOrder.Instance);
+    private readonly Queue<(long Sequence, byte[][] Keys)> written = new();
+
+    private int openTransactions;
+    private volatile bool failed;
+    private volatile bool disposed;
 
     private Database(IStorageFile dataFile, IStorageFile logFile, WriteAheadLog log, DatabaseOptions options)
     {
@@ -77,7 +85,7 @@ public sealed class Database : IDisposable
             Recover(dataFile, log);
 
             var database = new Database(dataFile, logFile, log, options);
-            new HeaderPage(database.Cache.Get(0)).Validate();
+            new HeaderPage(database.Cache.Get(0, PageCache.Latest)).Validate();
             return database;
         }
         catch
@@ -90,53 +98,55 @@ public sealed class Database : IDisposable
 
     public WriteTransaction BeginWrite()
     {
-        Enter();
+        Opening();
         return new WriteTransaction(this);
     }
 
     public ReadTransaction BeginRead()
     {
-        Enter();
+        Opening();
         return new ReadTransaction(this);
     }
 
     /// <summary>Copy everything the log holds into the data file, and empty the log.</summary>
     public void Checkpoint()
     {
-        Enter();
-        try
+        lock (commitLock)
         {
+            ThrowIfFailed();
             RunCheckpoint();
-        }
-        finally
-        {
-            Leave();
         }
     }
 
-    /// <summary>Checkpoint and close. After an I/O error, close without touching the files.</summary>
+    /// <summary>
+    /// Checkpoint and close. After an I/O error, close without touching the files. Every
+    /// transaction has to be finished first.
+    /// </summary>
     public void Dispose()
     {
         if (disposed)
         {
             return;
         }
-        ThrowIfHolding("close the database");
-        turn.Wait();
-        try
+        if (Volatile.Read(ref openTransactions) > 0)
         {
-            if (!failed)
-            {
-                RunCheckpoint();
-            }
+            throw new InvalidOperationException("transactions are still open; finish them before closing the database");
         }
-        finally
+        lock (commitLock)
         {
-            disposed = true;
-            dataFile.Dispose();
-            logFile.Dispose();
-            turn.Release();
-            turn.Dispose();
+            try
+            {
+                if (!failed)
+                {
+                    RunCheckpoint();
+                }
+            }
+            finally
+            {
+                disposed = true;
+                dataFile.Dispose();
+                logFile.Dispose();
+            }
         }
     }
 
@@ -158,56 +168,81 @@ public sealed class Database : IDisposable
     }
 
     /// <summary>
-    /// Make one transaction's pages durable and current. Called with the turn held; when it
-    /// returns, the transaction is committed.
+    /// Commit a write transaction: check it against the commits it did not see, apply its
+    /// changes to the newest tree, make them durable, then publish them.
     /// </summary>
-    internal void Commit(SortedDictionary<uint, byte[]> pages)
+    internal void Commit(WriteTransaction transaction)
     {
-        ThrowIfFailed();
-        var frames = new List<(uint, byte[])>(pages.Count);
-        foreach (var (id, bytes) in pages)
+        lock (commitLock)
         {
-            Page.Seal(bytes);
-            frames.Add((id, bytes));
-        }
-        try
-        {
-            log.Append(frames);
-            log.Flush();
-        }
-        catch
-        {
-            // After a failed write or flush the operating system may already have dropped the
-            // data, and a second flush can report success anyway; only recovery is known right.
-            failed = true;
-            throw;
-        }
-        try
-        {
-            // Putting a page in the cache can evict another, and writing that one can fail. The
-            // transaction is durable already, but a cache left half updated must never reach
-            // the data file at a checkpoint, which would then empty the log.
-            foreach (var (id, bytes) in frames)
+            ThrowIfFailed();
+            foreach (var key in transaction.Writes.Keys)
             {
-                Cache.Put(id, bytes);
+                if (lastWritten.TryGetValue(key, out long sequence) && sequence > transaction.Snapshot)
+                {
+                    throw new WriteConflictException(
+                        $"key {Convert.ToHexString(key)} was written by a transaction that committed after this one began");
+                }
             }
-        }
-        catch
-        {
-            failed = true;
-            throw;
-        }
-        if (log.Size >= options.CheckpointAfterBytes)
-        {
-            RunCheckpoint();
+
+            var pages = new CommitPages(Cache);
+            var tree = new BTree(pages);
+            foreach (var (key, value) in transaction.Writes)
+            {
+                if (value is null)
+                {
+                    tree.Delete(key);
+                }
+                else
+                {
+                    tree.Put(key, value);
+                }
+            }
+            if (pages.Changed.Count == 0)
+            {
+                return;
+            }
+
+            var frames = new List<(uint, byte[])>(pages.Changed.Count);
+            foreach (var (id, bytes) in pages.Changed)
+            {
+                Page.Seal(bytes);
+                frames.Add((id, bytes));
+            }
+            long committed;
+            try
+            {
+                log.Append(frames);
+                log.Flush();
+                // Publishing can evict a page, and writing it can fail. The commit is durable
+                // already, but a cache left half published must never reach the data file at a
+                // checkpoint, which would then empty the log.
+                committed = Cache.Publish(frames, pages.IsNew);
+            }
+            catch
+            {
+                // After a failed write or flush the operating system may already have dropped the
+                // data, and a second flush can report success anyway; only recovery is known right.
+                failed = true;
+                throw;
+            }
+
+            var keys = transaction.Writes.Keys.ToArray();
+            foreach (var key in keys)
+            {
+                lastWritten[key] = committed;
+            }
+            written.Enqueue((committed, keys));
+            ForgetWritesOlderThan(Cache.OldestOpenSnapshot);
+
+            if (log.Size >= options.CheckpointAfterBytes)
+            {
+                RunCheckpoint();
+            }
         }
     }
 
-    internal void Leave()
-    {
-        Volatile.Write(ref holder, 0);
-        turn.Release();
-    }
+    internal void Closed() => Interlocked.Decrement(ref openTransactions);
 
     internal void ThrowIfFailed()
     {
@@ -218,35 +253,33 @@ public sealed class Database : IDisposable
         }
     }
 
-    private void Enter()
+    private void Opening()
     {
         ThrowIfFailed();
-        ThrowIfHolding("open another transaction");
-        turn.Wait();
-        if (failed || disposed)
-        {
-            turn.Release();
-            ThrowIfFailed();
-        }
-        Volatile.Write(ref holder, Environment.CurrentManagedThreadId);
+        Interlocked.Increment(ref openTransactions);
     }
 
     /// <summary>
-    /// Only one transaction runs at a time, so code that already holds one and asks for another
-    /// would wait for itself for ever. It gets an exception instead.
+    /// A commit at or below the oldest open snapshot has been seen by every open transaction,
+    /// and every later one will begin after it: it can never conflict again.
     /// </summary>
-    private void ThrowIfHolding(string what)
+    private void ForgetWritesOlderThan(long oldest)
     {
-        if (Volatile.Read(ref holder) == Environment.CurrentManagedThreadId)
+        while (written.Count > 0 && written.Peek().Sequence <= oldest)
         {
-            throw new InvalidOperationException(
-                $"a transaction is still open here; one runs at a time, so trying to {what} would wait for ever");
+            var (sequence, keys) = written.Dequeue();
+            foreach (var key in keys)
+            {
+                if (lastWritten.TryGetValue(key, out long last) && last == sequence)
+                {
+                    lastWritten.Remove(key);
+                }
+            }
         }
     }
 
     private void RunCheckpoint()
     {
-        ThrowIfFailed();
         try
         {
             Cache.WriteBack();

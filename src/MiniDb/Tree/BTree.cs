@@ -262,7 +262,7 @@ internal sealed class BTree(IPages pages)
         }
     }
 
-    private static void CheckSize(ReadOnlySpan<byte> key, ReadOnlySpan<byte> value)
+    internal static void CheckSize(ReadOnlySpan<byte> key, ReadOnlySpan<byte> value)
     {
         if (key.IsEmpty || key.Length > MaxKeySize)
         {
