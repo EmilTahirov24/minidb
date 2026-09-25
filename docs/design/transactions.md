@@ -131,7 +131,7 @@ The crash tests of milestone 1 run again, unchanged, and must still pass.
 - **No version outlives its readers**: once every transaction has ended, the cache holds only the
   newest version of each page.
 - **The crash tests** of milestone 1, unchanged.
-- **The same concurrency benchmark** as before, for the difference.
+- **The same concurrency benchmark** as before, for the difference ([results](../results/concurrency.md)).
 
 ## Order of work
 

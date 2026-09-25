@@ -10,9 +10,9 @@ InvocationCount=1  IterationCount=5  RunStrategy=Monitoring
 UnrollFactor=1  WarmupCount=1  
 
 ```
-| Method   | Engine | Order     | Mean       | Error       | StdDev    |
-|--------- |------- |---------- |-----------:|------------:|----------:|
-| **LoadKeys** | **MiniDB** | **ascending** |   **178.7 ms** |    **94.10 ms** |  **24.44 ms** |
-| **LoadKeys** | **MiniDB** | **random**    | **3,184.8 ms** | **2,167.73 ms** | **562.95 ms** |
-| **LoadKeys** | **SQLite** | **ascending** |   **329.5 ms** |   **266.48 ms** |  **69.20 ms** |
-| **LoadKeys** | **SQLite** | **random**    | **4,692.1 ms** | **3,161.73 ms** | **821.09 ms** |
+| Method   | Engine | Order     | Mean       | Error     | StdDev    |
+|--------- |------- |---------- |-----------:|----------:|----------:|
+| **LoadKeys** | **MiniDB** | **ascending** |   **199.6 ms** |  **79.82 ms** |  **20.73 ms** |
+| **LoadKeys** | **MiniDB** | **random**    | **2,516.1 ms** | **505.52 ms** | **131.28 ms** |
+| **LoadKeys** | **SQLite** | **ascending** |   **270.7 ms** |  **23.86 ms** |   **6.20 ms** |
+| **LoadKeys** | **SQLite** | **random**    | **3,009.2 ms** | **371.16 ms** |  **96.39 ms** |

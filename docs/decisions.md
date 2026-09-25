@@ -71,6 +71,11 @@ safe to share between threads. The exception is there because the alternative is
 thread waiting for a turn it holds itself waits for ever, and a test of this project's own did
 exactly that before the check existed.
 
+*Measured, before milestone 2 replaced it:* with four threads reading while one commits, 285
+reads a second, the 99th-percentile read taking 600 ms and the 99.9th 2.4 s. That is worse than
+readers waiting their turn: the lock is not fair, the writer takes it again the moment it lets
+go, and the readers starve ([results](results/concurrency-milestone-1.md)).
+
 ## 5. A failed `fsync` stops the database
 
 **Context.** Writing to disk can fail, and the obvious reaction is to try again.
@@ -108,6 +113,9 @@ transaction wrote any of the same keys and committed after this one began, the c
 transaction that only reads can never fail; and checking the keys written is exactly what
 snapshot isolation asks for. The cost is work thrown away when conflicts are frequent, which the
 bank-transfer test counts in retries.
+
+*Measured:* four threads moving money among twelve accounts made 1,190 transfers and retried
+748 times: conflicts are frequent when every transaction writes two of twelve keys.
 
 ## 8. Snapshot isolation, not serializable
 

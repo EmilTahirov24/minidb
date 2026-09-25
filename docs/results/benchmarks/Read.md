@@ -9,9 +9,9 @@ BenchmarkDotNet v0.15.8, Windows 11 (10.0.26200.9457/25H2/2025Update/HudsonValle
 IterationCount=10  WarmupCount=3  
 
 ```
-| Method    | Engine | Mean       | Error     | StdDev    |
-|---------- |------- |-----------:|----------:|----------:|
-| **PointRead** | **MiniDB** |   **8.416 μs** | **0.5402 μs** | **0.3573 μs** |
-| Scan100   | MiniDB |  58.079 μs | 4.2478 μs | 2.8097 μs |
-| **PointRead** | **SQLite** |  **14.544 μs** | **0.3483 μs** | **0.2072 μs** |
-| Scan100   | SQLite | 111.490 μs | 4.8625 μs | 3.2162 μs |
+| Method    | Engine | Mean      | Error     | StdDev    |
+|---------- |------- |----------:|----------:|----------:|
+| **PointRead** | **MiniDB** |  **6.074 μs** | **0.1135 μs** | **0.0676 μs** |
+| Scan100   | MiniDB | 49.497 μs | 5.7459 μs | 3.8006 μs |
+| **PointRead** | **SQLite** |  **6.833 μs** | **0.1114 μs** | **0.0663 μs** |
+| Scan100   | SQLite | 69.263 μs | 1.4347 μs | 0.8537 μs |

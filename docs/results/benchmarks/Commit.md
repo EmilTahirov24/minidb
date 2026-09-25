@@ -11,5 +11,5 @@ IterationCount=10  WarmupCount=3
 ```
 | Method          | Engine | Mean     | Error    | StdDev   |
 |---------------- |------- |---------:|---------:|---------:|
-| **SingleKeyCommit** | **MiniDB** | **828.9 μs** | **90.25 μs** | **59.70 μs** |
-| **SingleKeyCommit** | **SQLite** | **822.0 μs** | **18.65 μs** | **12.33 μs** |
+| **SingleKeyCommit** | **MiniDB** | **816.8 μs** | **71.07 μs** | **47.01 μs** |
+| **SingleKeyCommit** | **SQLite** | **832.3 μs** | **65.41 μs** | **43.26 μs** |
